@@ -140,7 +140,7 @@ if [[ "$MERGE_ONLY" == 1 ]]; then
     fi
 fi
 
-QSSI_TARGETS_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "kona" "atoll")
+QSSI_TARGETS_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "kona" "atoll" "trinket" "lito")
 QSSI_TARGET_FLAG=0
 
 # Export BUILD_DATETIME so that both Qssi and target images get the same timestamp
@@ -150,7 +150,7 @@ EPOCH_TIME=`${DATE} +%s`
 export BUILD_DATETIME="$EPOCH_TIME"
 
 # Default A/B configuration flag for all QSSI targets (not used for legacy targets).
-ENABLE_AB=true
+ENABLE_AB=${ENABLE_AB:-true}
 ARGS="$@"
 QSSI_ARGS="$ARGS ENABLE_AB=$ENABLE_AB"
 
@@ -166,8 +166,8 @@ QSSI_ARGS_WITHOUT_DIST=""
 DIST_DIR="out/dist"
 MERGED_TARGET_FILES="$DIST_DIR/merged-qssi_${TARGET_PRODUCT}-target_files.zip"
 MERGED_OTA_ZIP="$DIST_DIR/merged-qssi_${TARGET_PRODUCT}-ota.zip"
-DIST_ENABLED_TARGET_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "kona")
-DYNAMIC_PARTITION_ENABLED_TARGET_LIST=("msmnile" "kona" "sdm710")
+DIST_ENABLED_TARGET_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "trinket" "lito" "kona")
+DYNAMIC_PARTITION_ENABLED_TARGET_LIST=("msmnile" "sdm710" "kona")
 DYNAMIC_PARTITIONS_IMAGES_PATH=$OUT
 DP_IMAGES_OVERRIDE=false
 function log() {
@@ -187,6 +187,20 @@ done
 
 # Set Dynamic Partitio value
 QSSI_ARGS="$QSSI_ARGS BOARD_DYNAMIC_PARTITION_ENABLE=$BOARD_DYNAMIC_PARTITION_ENABLE"
+
+# Set Shipping API level on target basis.
+API_LAUNCHED_WITH_P="28"
+API_LAUNCHED_WITH_Q="29"
+OTA_CONFIG_TARGET_LIST=("sdm845" "sm6150" "atoll" "trinket" "lito")
+SHIPPING_API_LEVEL=$API_LAUNCHED_WITH_Q
+for OTA_TARGET in "${OTA_CONFIG_TARGET_LIST[@]}"
+do
+    if [ "$TARGET_PRODUCT" == "$OTA_TARGET" ]; then
+        SHIPPING_API_LEVEL=$API_LAUNCHED_WITH_P
+        break
+    fi
+done
+QSSI_ARGS="$QSSI_ARGS SHIPPING_API_LEVEL=$SHIPPING_API_LEVEL"
 
 for ARG in $QSSI_ARGS
 do
