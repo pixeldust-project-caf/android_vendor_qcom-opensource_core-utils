@@ -58,7 +58,20 @@
 # Version 2:
 #     Supports custom copy paths for dynamic patition images when compiled with dist.
 #     option : --dp_images_path=<custom-copy-path>
-BUILD_SH_VERSION=2
+# Version 3:
+#     Supports segmenting the build into qssi only, target only and merge only steps and
+#     enabling users to call specific steps or full build by giving no separate steps.
+#     options: --qssi_only, --target_only, --merge_only
+#     Usage: ./build.sh dist -j32 --qssi_only (for only qssi build) or ./build.sh dist -j32 (for full build)
+#     Note: qssi_only and target_only options can be given together but merge_only should not be combined with
+#           any other options.
+BUILD_SH_VERSION=3
+if [ "$1" == "--version" ]; then
+    return $BUILD_SH_VERSION
+    # Above return will work only if someone source'ed this script (which is expected, need to source the script).
+    # Add extra exit 0 to ensure script doesn't proceed further (if someone didn't use source but passed --version)
+    exit 0
+fi
 ###########################
 
 #Sanitize host toolsi
@@ -85,8 +98,49 @@ FIND=${FIND:-find}
 GREP=`which grep`
 GREP=${GREP:-grep}
 
+MAKE_ARGUMENTS=()
+MERGE_ONLY=0
+QSSI_ONLY=0
+TARGET_ONLY=0
+FULL_BUILD=0
 
-QSSI_TARGETS_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "kona" "atoll")
+while [[ $# -gt 0 ]]
+    do
+    arg="$1"
+    case $arg in
+        *merge_only)
+            MERGE_ONLY=1
+            shift # go to next argument
+            ;;
+        *qssi_only)
+            QSSI_ONLY=1
+            shift
+            ;;
+        *target_only)
+            TARGET_ONLY=1
+            shift
+            ;;
+        *)  # all other option
+            MAKE_ARGUMENTS+=("$1") # save it in an array to pass to make later
+            shift
+            ;;
+    esac
+done
+set -- "${MAKE_ARGUMENTS[@]}" # restore the argument list ($@) to be set to MAKE_ARGUMENTS
+
+# If none of the discrete options are passed, this is a full build
+if [[ "$MERGE_ONLY" != 1 && "$QSSI_ONLY" != 1 && "$TARGET_ONLY" != 1 ]]; then
+    FULL_BUILD=1
+fi
+
+if [[ "$MERGE_ONLY" == 1 ]]; then
+    if [[ "$QSSI_ONLY" == 1 || "$TARGET_ONLY" == 1 ]]; then
+        echo "merge_only cannot be passed along with qssi_only or target_only options"
+        exit 1
+    fi
+fi
+
+QSSI_TARGETS_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "kona" "atoll" "trinket" "lito")
 QSSI_TARGET_FLAG=0
 
 # Export BUILD_DATETIME so that both Qssi and target images get the same timestamp
@@ -96,7 +150,7 @@ EPOCH_TIME=`${DATE} +%s`
 export BUILD_DATETIME="$EPOCH_TIME"
 
 # Default A/B configuration flag for all QSSI targets (not used for legacy targets).
-ENABLE_AB=true
+ENABLE_AB=${ENABLE_AB:-true}
 ARGS="$@"
 QSSI_ARGS="$ARGS ENABLE_AB=$ENABLE_AB"
 
@@ -112,8 +166,8 @@ QSSI_ARGS_WITHOUT_DIST=""
 DIST_DIR="out/dist"
 MERGED_TARGET_FILES="$DIST_DIR/merged-qssi_${TARGET_PRODUCT}-target_files.zip"
 MERGED_OTA_ZIP="$DIST_DIR/merged-qssi_${TARGET_PRODUCT}-ota.zip"
-DIST_ENABLED_TARGET_LIST=("sdm710" "sdm845" "msmnile" "sm6150")
-DYNAMIC_PARTITION_ENABLED_TARGET_LIST=("msmnile")
+DIST_ENABLED_TARGET_LIST=("sdm710" "sdm845" "msmnile" "sm6150" "trinket" "lito")
+DYNAMIC_PARTITION_ENABLED_TARGET_LIST=("msmnile" "sdm710" "lito" "trinket")
 DYNAMIC_PARTITIONS_IMAGES_PATH=$OUT
 DP_IMAGES_OVERRIDE=false
 function log() {
@@ -134,14 +188,23 @@ done
 # Set Dynamic Partitio value
 QSSI_ARGS="$QSSI_ARGS BOARD_DYNAMIC_PARTITION_ENABLE=$BOARD_DYNAMIC_PARTITION_ENABLE"
 
+# Set Shipping API level on target basis.
+SHIPPING_API_P="28"
+SHIPPING_API_Q="29"
+SHIPPING_API_P_TARGET_LIST=("sdm845" "sm6150" "atoll" "trinket" "lito" "kona" "sdm710")
+SHIPPING_API_LEVEL=$SHIPPING_API_Q
+for P_API_TARGET in "${SHIPPING_API_P_TARGET_LIST[@]}"
+do
+    if [ "$TARGET_PRODUCT" == "$P_API_TARGET" ]; then
+        SHIPPING_API_LEVEL=$SHIPPING_API_P
+        break
+    fi
+done
+QSSI_ARGS="$QSSI_ARGS SHIPPING_API_LEVEL=$SHIPPING_API_LEVEL"
+
 for ARG in $QSSI_ARGS
 do
-    if [ "$ARG" == "--version" ]; then
-        return "$BUILD_SH_VERSION"
-        # Above return will work only if someone source'ed this script (which is expected, need to source the script).
-        # Add extra exit 0 to ensure script doesn't proceed further (if someone didn't use source but passed --version)
-        exit 0
-    elif [ "$ARG" == "$DIST_COMMAND" ]; then
+    if [ "$ARG" == "$DIST_COMMAND" ]; then
         DIST_ENABLED=true
     elif [[ "$ARG" == *"--dp_images_path"* ]]; then
         DP_IMAGES_OVERRIDE=true
@@ -206,7 +269,7 @@ function generate_dynamic_partition_images () {
            command "mkdir -p $DYNAMIC_PARTITIONS_IMAGES_PATH"
        fi
        command "cp out/target/product/qssi/vbmeta_system.img $OUT/"
-       command "unzip -jo $MERGED_TARGET_FILES IMAGES/*.img -d $DYNAMIC_PARTITIONS_IMAGES_PATH"
+       command "unzip -jo $MERGED_TARGET_FILES IMAGES/*.img -x IMAGES/userdata.img -d $DYNAMIC_PARTITIONS_IMAGES_PATH"
        command "./build/tools/releasetools/build_super_image.py $MERGED_TARGET_FILES $DYNAMIC_PARTITIONS_IMAGES_PATH/super.img"
     else
         command "cp $QSSI_OUT/vbmeta_system.img $OUT/"
@@ -258,6 +321,42 @@ function generate_ota_zip () {
     command "$MERGE_TARGET_FILES_COMMAND"
 }
 
+function build_qssi_only () {
+    command "source build/envsetup.sh"
+    command "$QTI_BUILDTOOLS_DIR/build/kheaders-dep-scanner.sh"
+    command "lunch qssi-${TARGET_BUILD_VARIANT}"
+    command "make $QSSI_ARGS"
+}
+
+function build_target_only () {
+    command "source build/envsetup.sh"
+    command "$QTI_BUILDTOOLS_DIR/build/kheaders-dep-scanner.sh"
+    command "lunch ${TARGET}-${TARGET_BUILD_VARIANT}"
+    command "make $QSSI_ARGS"
+}
+
+function merge_only () {
+    # DIST/OTA specific operations:
+    if [ "$DIST_ENABLED" = true ]; then
+        generate_ota_zip
+    fi
+    # Handle dynamic partition case and generate images
+    if [ "$BOARD_DYNAMIC_PARTITION_ENABLE" = true ]; then
+        generate_dynamic_partition_images
+    fi
+}
+
+function full_build () {
+    build_qssi_only
+    build_target_only
+    # Copy Qssi system|product.img to target folder so that all images can be picked up from one folder
+    command "cp out/target/product/qssi/system.img $OUT/"
+    if [ -f  out/target/product/qssi/product.img ]; then
+        command "cp out/target/product/qssi/product.img $OUT/"
+    fi
+    merge_only
+}
+
 if [ "$TARGET_PRODUCT" == "qssi" ]; then
     log "FAILED: lunch option should not be set to qssi. Please set a target out of the following QSSI targets: ${QSSI_TARGETS_LIST[@]}"
     exit 1
@@ -284,26 +383,23 @@ else # For QSSI targets
 
     TARGET="$TARGET_PRODUCT"
 
-    command "source build/envsetup.sh"
-    command "lunch qssi-${TARGET_BUILD_VARIANT}"
-    command "$QTI_BUILDTOOLS_DIR/build/kheaders-dep-scanner.sh"
-    command "make $QSSI_ARGS"
-    command "lunch ${TARGET}-${TARGET_BUILD_VARIANT}"
-    command "make $QSSI_ARGS"
-
-    # Copy Qssi system|product.img to target folder so that all images can be picked up from one folder
-    command "cp out/target/product/qssi/system.img $OUT/"
-    if [ -f  out/target/product/qssi/product.img ]; then
-       command "cp out/target/product/qssi/product.img $OUT/"
+    if [[ "$FULL_BUILD" -eq 1 ]]; then
+        log "Executing a full build ..."
+        full_build
     fi
-fi
 
-# DIST/OTA specific operations:
-if [ "$DIST_ENABLED" = true ]; then
-    generate_ota_zip
-fi
+    if [[ "$QSSI_ONLY" -eq 1 ]]; then
+        log "Executing a QSSI only build ..."
+        build_qssi_only
+    fi
 
-# Handle dynamic partition case and generate images
-if [ "$BOARD_DYNAMIC_PARTITION_ENABLE" = true ]; then
-    generate_dynamic_partition_images
+    if [[ "$TARGET_ONLY" -eq 1 ]]; then
+        log "Executing a target only build for $TARGET_PRODUCT ..."
+        build_target_only
+    fi
+
+    if [[ "$MERGE_ONLY" -eq 1 ]]; then
+        log "Executing a merge only operation ..."
+        merge_only
+    fi
 fi
