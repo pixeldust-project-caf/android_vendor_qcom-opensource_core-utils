@@ -161,6 +161,16 @@ DATE=${DATE:-date}
 EPOCH_TIME=`${DATE} +%s`
 export BUILD_DATETIME="$EPOCH_TIME"
 
+NON_AB_TARGET_LIST=("bengal_32go")
+for NON_AB_TARGET in "${NON_AB_TARGET_LIST[@]}"
+do
+    if [ "$TARGET_PRODUCT" == "$NON_AB_TARGET" ]; then
+        log "${TARGET_PRODUCT} found in Non-A/B Target List"
+        ENABLE_AB=false
+        break
+    fi
+done
+
 # Default A/B configuration flag for all QSSI targets (not used for legacy targets).
 ENABLE_AB=${ENABLE_AB:-true}
 ARGS="$@"
@@ -179,7 +189,7 @@ DIST_DIR="out/dist"
 MERGED_TARGET_FILES="$DIST_DIR/merged-qssi_${TARGET_PRODUCT}-target_files.zip"
 MERGED_OTA_ZIP="$DIST_DIR/merged-qssi_${TARGET_PRODUCT}-ota.zip"
 DIST_ENABLED_TARGET_LIST=("lahaina" "kona" "sdm710" "sdm845" "msmnile" "sm6150" "trinket" "trinket_32" "lito" "bengal" "bengal_32" "atoll" "bengal_32go")
-DYNAMIC_PARTITION_ENABLED_TARGET_LIST=("lahaina" "kona" "msmnile" "sdm710" "lito" "trinket" "trinket_32" "atoll" "bengal" "bengal_32")
+DYNAMIC_PARTITION_ENABLED_TARGET_LIST=("lahaina" "kona" "msmnile" "sdm710" "lito" "trinket" "trinket_32" "atoll" "bengal" "bengal_32" "bengal_32go")
 DYNAMIC_PARTITIONS_IMAGES_PATH=$OUT
 DP_IMAGES_OVERRIDE=false
 function log() {
@@ -203,7 +213,7 @@ QSSI_ARGS="$QSSI_ARGS BOARD_DYNAMIC_PARTITION_ENABLE=$BOARD_DYNAMIC_PARTITION_EN
 # Set Shipping API level on target basis.
 SHIPPING_API_P="28"
 SHIPPING_API_Q="29"
-SHIPPING_API_P_TARGET_LIST=("sdm845" "sm6150" "bengal_32go")
+SHIPPING_API_P_TARGET_LIST=("sdm845" "sm6150")
 SHIPPING_API_LEVEL=$SHIPPING_API_Q
 for P_API_TARGET in "${SHIPPING_API_P_TARGET_LIST[@]}"
 do
